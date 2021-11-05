@@ -28,11 +28,20 @@ public abstract class BaseWeaver implements IWeaver{
 
     private static final String FILE_SEP = File.separator;
 
+    /**
+     * 这个类加载器，已经加载了很多类了
+     */
     protected ClassLoader classLoader;
 
     public BaseWeaver() {
     }
 
+    /**
+     * 处理 jar 文件
+     * @param inputJar
+     * @param outputJar
+     * @throws IOException
+     */
     public final void weaveJar(File inputJar, File outputJar) throws IOException {
         ZipFile inputZip = new ZipFile(inputJar);
         ZipOutputStream outputZip = new ZipOutputStream(new BufferedOutputStream(
@@ -46,8 +55,10 @@ public abstract class BaseWeaver implements IWeaver{
             byte[] newEntryContent;
             // separator of entry name is always '/', even in windows
             if (!isWeavableClass(outEntry.getName().replace("/", "."))) {
+                // 不需要修改，直接写到对应的地方
                 newEntryContent = org.apache.commons.io.IOUtils.toByteArray(originalFile);
             } else {
+                // 进行修改
                 newEntryContent = weaveSingleClassToByteArray(originalFile);
             }
             CRC32 crc32 = new CRC32();
@@ -67,6 +78,13 @@ public abstract class BaseWeaver implements IWeaver{
         outputZip.close();
     }
 
+    /**
+     * 处理 class 文件
+     * @param inputFile
+     * @param outputFile
+     * @param inputBaseDir
+     * @throws IOException
+     */
     public final void weaveSingleClassToFile(File inputFile, File outputFile, String inputBaseDir) throws IOException {
         if(!inputBaseDir.endsWith(FILE_SEP)) inputBaseDir = inputBaseDir + FILE_SEP;
         if(isWeavableClass(inputFile.getAbsolutePath().replace(inputBaseDir, "").replace(FILE_SEP, "."))) {
@@ -89,12 +107,18 @@ public abstract class BaseWeaver implements IWeaver{
         this.classLoader = classLoader;
     }
 
+    /**
+     * 核心都在这里
+     * @param inputStream
+     * @return
+     * @throws IOException
+     */
     @Override
     public byte[] weaveSingleClassToByteArray(InputStream inputStream) throws IOException {
-        ClassReader classReader = new ClassReader(inputStream);
-        ClassWriter classWriter = new ExtendClassWriter(classLoader, ClassWriter.COMPUTE_MAXS);
-        ClassVisitor classWriterWrapper = wrapClassWriter(classWriter);
-        classReader.accept(classWriterWrapper, ClassReader.EXPAND_FRAMES);
+        ClassReader classReader = new ClassReader(inputStream); // 1. 原始类
+        ClassWriter classWriter = new ExtendClassWriter(classLoader, ClassWriter.COMPUTE_MAXS); // 2. 这个类父类是一个 ClassVisitor
+        ClassVisitor classWriterWrapper = wrapClassWriter(classWriter); // 3. 装饰一下 ClassVisitor
+        classReader.accept(classWriterWrapper/*接收 4. ClassVisitor*/, ClassReader.EXPAND_FRAMES);
         return classWriter.toByteArray();
     }
 

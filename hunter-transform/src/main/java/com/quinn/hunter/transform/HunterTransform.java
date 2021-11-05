@@ -94,87 +94,115 @@ public class HunterTransform extends Transform {
         if(!isIncremental) {
             outputProvider.deleteAll();
         }
+        // 把所有的类加载到类加载器里面：包括 android.jar
         URLClassLoader urlClassLoader = ClassLoaderHelper.getClassLoader(inputs, referencedInputs, project);
         this.bytecodeWeaver.setClassLoader(urlClassLoader);
         boolean flagForCleanDexBuilderFolder = false;
-        for(TransformInput input : inputs) {
-            for(JarInput jarInput : input.getJarInputs()) {
-                Status status = jarInput.getStatus();
-                File dest = outputProvider.getContentLocation(
-                        jarInput.getFile().getAbsolutePath(),
-                        jarInput.getContentTypes(),
-                        jarInput.getScopes(),
-                        Format.JAR);
-                if(isIncremental && !emptyRun) {
-                    switch(status) {
-                        case NOTCHANGED:
-                            break;
-                        case ADDED:
-                        case CHANGED:
-                            transformJar(jarInput.getFile(), dest, status);
-                            break;
-                        case REMOVED:
-                            if (dest.exists()) {
-                                FileUtils.forceDelete(dest);
-                            }
-                            break;
-                    }
-                } else {
-                    //Forgive me!, Some project will store 3rd-party aar for several copies in dexbuilder folder,unknown issue.
-                    if(inDuplicatedClassSafeMode() && !isIncremental && !flagForCleanDexBuilderFolder) {
-                        cleanDexBuilderFolder(dest);
-                        flagForCleanDexBuilderFolder = true;
-                    }
-                    transformJar(jarInput.getFile(), dest, status);
-                }
-            }
-
-            for(DirectoryInput directoryInput : input.getDirectoryInputs()) {
-                File dest = outputProvider.getContentLocation(directoryInput.getName(),
-                        directoryInput.getContentTypes(), directoryInput.getScopes(),
-                        Format.DIRECTORY);
-                FileUtils.forceMkdir(dest);
-                if(isIncremental && !emptyRun) {
-                    String srcDirPath = directoryInput.getFile().getAbsolutePath();
-                    String destDirPath = dest.getAbsolutePath();
-                    Map<File, Status> fileStatusMap = directoryInput.getChangedFiles();
-                    for (Map.Entry<File, Status> changedFile : fileStatusMap.entrySet()) {
-                        Status status = changedFile.getValue();
-                        File inputFile = changedFile.getKey();
-                        String destFilePath = inputFile.getAbsolutePath().replace(srcDirPath, destDirPath);
-                        File destFile = new File(destFilePath);
-                        switch (status) {
-                            case NOTCHANGED:
-                                break;
-                            case REMOVED:
-                                if(destFile.exists()) {
-                                    //noinspection ResultOfMethodCallIgnored
-                                    destFile.delete();
-                                }
-                                break;
-                            case ADDED:
-                            case CHANGED:
-                                try {
-                                    FileUtils.touch(destFile);
-                                } catch (IOException e) {
-                                    //maybe mkdirs fail for some strange reason, try again.
-                                    FileUtils.forceMkdirParent(destFile);
-                                }
-                                transformSingleFile(inputFile, destFile, srcDirPath);
-                                break;
-                        }
-                    }
-                } else {
-                    transformDir(directoryInput.getFile(), dest);
-                }
-
-            }
+        // 遍历所有的类，对 jar 和 文件夹里面的类进行处理
+        Collection<JarInput> jarInputs;
+        Collection<DirectoryInput> directoryInputs;
+        for (TransformInput input : inputs) {
+            // input 包含2块内容
+            jarInputs = input.getJarInputs();
+            directoryInputs = input.getDirectoryInputs();
+            // 处理 jar
+            flagForCleanDexBuilderFolder = processJar(outputProvider, isIncremental, flagForCleanDexBuilderFolder, jarInputs);
+            // 处理文件夹
+            processDir(outputProvider, isIncremental, directoryInputs);
 
         }
 
         worker.await();
         long costTime = System.currentTimeMillis() - startTime;
         logger.warn((getName() + " costed " + costTime + "ms"));
+    }
+
+    private void processDir(TransformOutputProvider outputProvider, boolean isIncremental, Collection<DirectoryInput> directoryInputs) throws IOException {
+        for(DirectoryInput directoryInput : directoryInputs) {
+            File dest = outputProvider.getContentLocation(directoryInput.getName(),
+                    directoryInput.getContentTypes(), directoryInput.getScopes(),
+                    Format.DIRECTORY);
+            FileUtils.forceMkdir(dest);
+            if(isIncremental && !emptyRun) {
+                // 增量更新
+                String srcDirPath = directoryInput.getFile().getAbsolutePath();
+                String destDirPath = dest.getAbsolutePath();
+                Map<File, Status> fileStatusMap = directoryInput.getChangedFiles();
+                // 处理变动过的文件
+                for (Map.Entry<File, Status> changedFile : fileStatusMap.entrySet()) {
+                    Status status = changedFile.getValue();
+                    File inputFile = changedFile.getKey();
+                    String destFilePath = inputFile.getAbsolutePath().replace(srcDirPath, destDirPath);
+                    File destFile = new File(destFilePath);
+                    switch (status) {
+                        case NOTCHANGED:
+                            break;
+                        case REMOVED:
+                            if(destFile.exists()) {
+                                //noinspection ResultOfMethodCallIgnored
+                                destFile.delete();
+                            }
+                            break;
+                        case ADDED:
+                        case CHANGED:
+                            try {
+                                FileUtils.touch(destFile);
+                            } catch (IOException e) {
+                                //maybe mkdirs fail for some strange reason, try again.
+                                FileUtils.forceMkdirParent(destFile);
+                            }
+                            // 单个文件处理
+                            transformSingleFile(inputFile, destFile, srcDirPath);
+                            break;
+                    }
+                }
+            } else {
+                transformDir(directoryInput.getFile(), dest);
+            }
+
+        }
+    }
+
+    /**
+     * 处理jar 文件
+     * @param outputProvider
+     * @param isIncremental
+     * @param flagForCleanDexBuilderFolder
+     * @return
+     * @throws IOException
+     */
+    private boolean processJar(TransformOutputProvider outputProvider, boolean isIncremental, boolean flagForCleanDexBuilderFolder, Collection<JarInput> jarInputs) throws IOException {
+        for(JarInput jarInput : jarInputs) {
+            Status status = jarInput.getStatus();
+            File dest = outputProvider.getContentLocation(
+                    jarInput.getFile().getAbsolutePath(),
+                    jarInput.getContentTypes(),
+                    jarInput.getScopes(),
+                    Format.JAR);
+            if(isIncremental && !emptyRun) {
+                switch(status) {
+                    case NOTCHANGED:
+                        break;
+                    case ADDED:
+                    case CHANGED:
+                        transformJar(jarInput.getFile(), dest, status);
+                        break;
+                    case REMOVED:
+                        if (dest.exists()) {
+                            FileUtils.forceDelete(dest);
+                        }
+                        break;
+                }
+            } else {
+                //Forgive me!, Some project will store 3rd-party aar for several copies in dexbuilder folder,unknown issue.
+                if(inDuplicatedClassSafeMode() && !isIncremental && !flagForCleanDexBuilderFolder) {
+                    cleanDexBuilderFolder(dest);
+                    flagForCleanDexBuilderFolder = true;
+                }
+                transformJar(jarInput.getFile(), dest, status);
+            }
+        }
+        return flagForCleanDexBuilderFolder;
     }
 
     private void transformSingleFile(final File inputFile, final File outputFile, final String srcBaseDir) {

@@ -18,7 +18,7 @@ public final class TimingClassAdapter extends ClassVisitor{
     }
 
     @Override
-    public void visit(int version, int access, String name, String signature, String superName, String[] interfaces) {
+    public void visit(int version, int access, String name, String signature/*泛型信息*/, String superName, String[] interfaces) {
         super.visit(version, access, name, signature, superName, interfaces);
         this.isHeritedFromBlockHandler = Arrays.toString(interfaces).contains("com/hunter/library/timing/IBlockHandler");
         this.className = name;
