@@ -25,7 +25,7 @@ public final class LinelogMethodAdapter extends MethodVisitor implements Opcodes
     }
 
     @Override
-    public void visitMethodInsn(int opcode, String owner, String name, String desc, boolean itf) {
+    public void visitMethodInsn(int opcode, String owner/*方法的拥有者（类全路径）*/, String name/*方法名称*/, String desc, boolean itf/*是否为接口*/) {
         if("android/util/Log".equals(owner)) {
             String linenumberConst = lineNunber + "";
             if("i".equals(name)) {
